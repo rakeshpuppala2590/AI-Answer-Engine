@@ -3,7 +3,7 @@ declare module "google-search-results-nodejs" {
     constructor(apiKey: string);
     json(
       params: { q: string; num?: number },
-      callback: (data: any) => void
+      callback: (data: SearchResponse) => void
     ): void;
   }
 }

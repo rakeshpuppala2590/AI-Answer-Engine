@@ -7,9 +7,9 @@ export async function POST(req: Request) {
       shareId,
       newSessionId
     );
-
     return Response.json({ success });
-  } catch (error) {
+  } catch (err) {
+    console.error("Continue error:", err);
     return Response.json(
       { error: "Failed to continue conversation" },
       { status: 500 }

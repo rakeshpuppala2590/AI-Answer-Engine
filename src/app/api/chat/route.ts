@@ -1,7 +1,7 @@
 import { WebScraperService } from "../../../services/webScraper";
 import { ChatService } from "../../../services/chatService";
 import { RedisService } from "../../../services/redisService";
-import { ChatMessage } from "../../../types";
+// import { ChatMessage } from "../../../types";
 
 const webScraper = new WebScraperService();
 const chatService = new ChatService();

@@ -20,19 +20,14 @@ const ratelimit = new Ratelimit({
 export async function middleware(request: NextRequest) {
   try {
     const ip = request.headers.get("x-forwarded-for") || "127.0.0.1";
-    const { success, limit, reset, remaining } = await ratelimit.limit(ip);
+    const { success, limit, reset } = await ratelimit.limit(ip);
 
     if (!success) {
       const resetInSeconds = Math.ceil((reset - Date.now()) / 1000);
       const errorResponse = {
-        answer: `Rate limit exceeded. Please wait ${resetInSeconds} seconds before trying again. You are limited to ${limit} requests per minute.`,
+        answer: `Rate limit exceeded. Please wait ${resetInSeconds} seconds before trying again.`,
         error: true,
-        rateLimit: {
-          limit,
-          remaining: 0,
-          reset,
-          resetIn: resetInSeconds,
-        },
+        rateLimit: { limit, reset, resetIn: resetInSeconds },
       };
 
       return new NextResponse(JSON.stringify(errorResponse), {
@@ -40,14 +35,13 @@ export async function middleware(request: NextRequest) {
         headers: {
           "Content-Type": "application/json",
           "X-RateLimit-Limit": limit.toString(),
-          "X-RateLimit-Remaining": "0",
           "X-RateLimit-Reset": reset.toString(),
         },
       });
     }
     return NextResponse.next();
-  } catch (error) {
-    console.error("Rate limiting error:", error);
+  } catch (err) {
+    console.error("Rate limit error:", err);
     return NextResponse.next();
   }
 }
