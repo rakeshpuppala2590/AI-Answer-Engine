@@ -27,6 +27,24 @@ export default function Home() {
       setSessionId(newSessionId);
     }
   }, []);
+  // Add to page.tsx
+  const handleShare = async () => {
+    try {
+      const response = await fetch("/api/chat/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      const { shareId } = await response.json();
+
+      // Create shareable URL
+      const shareUrl = `${window.location.origin}/chat/${shareId}`;
+      await navigator.clipboard.writeText(shareUrl);
+      alert("Share link copied to clipboard!");
+    } catch (error) {
+      console.error("Failed to share:", error);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,6 +158,12 @@ export default function Home() {
               className="bg-cyan-600 text-white px-5 py-3 rounded-xl hover:bg-cyan-700 transition-all disabled:bg-cyan-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? "Sending..." : "Send"}
+            </button>
+            <button
+              onClick={handleShare}
+              className="px-4 py-2 bg-green-500 text-white rounded-lg"
+            >
+              Share Chat
             </button>
           </div>
         </div>
