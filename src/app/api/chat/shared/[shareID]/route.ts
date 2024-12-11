@@ -7,7 +7,7 @@ export async function GET(
   try {
     const messages = await redisService.getSharedChat(params.shareId);
     return Response.json({ messages });
-  } catch (error) {
+  } catch {
     return Response.json(
       { error: "Failed to get shared chat" },
       { status: 500 }

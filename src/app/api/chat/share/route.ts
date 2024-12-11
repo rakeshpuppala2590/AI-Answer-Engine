@@ -7,7 +7,7 @@ export async function POST(req: Request) {
     const shareId = await redisService.createShareableLink(sessionId);
 
     return Response.json({ shareId });
-  } catch (error) {
+  } catch {
     return Response.json(
       { error: "Failed to create share link" },
       { status: 500 }
