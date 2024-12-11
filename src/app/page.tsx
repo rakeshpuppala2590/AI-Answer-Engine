@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-// import { Message } from "./types";
+import { useState, useEffect } from "react";
+import { v4 as uuidv4 } from "uuid";
 
 type Message = {
   role: "user" | "ai";
@@ -9,33 +9,45 @@ type Message = {
 };
 
 export default function Home() {
-  const [message, setMessage] = useState("");
+  const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
     { role: "ai", content: "Hello! How can I help you today?" },
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState("");
 
-  const handleSend = async () => {
-    if (!message.trim()) return;
+  useEffect(() => {
+    // Generate or retrieve session ID
+    const existingSessionId = localStorage.getItem("chatSessionId");
+    if (existingSessionId) {
+      setSessionId(existingSessionId);
+    } else {
+      const newSessionId = uuidv4();
+      localStorage.setItem("chatSessionId", newSessionId);
+      setSessionId(newSessionId);
+    }
+  }, []);
 
-    // Add user message to the conversation
-    const userMessage = { role: "user" as const, content: message };
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+
+    const userMessage: Message = { role: "user", content: input };
     setMessages(prev => [...prev, userMessage]);
-    setMessage("");
     setIsLoading(true);
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: input,
+          sessionId,
+        }),
       });
 
-      // TODO: Handle the response from the chat API to display the AI response in the UI
       const data = await response.json();
-      // Add AI response
+
       const aiMessage: Message = {
         role: "ai",
         content: data.answer,
@@ -49,6 +61,7 @@ export default function Home() {
       ]);
     } finally {
       setIsLoading(false);
+      setInput("");
     }
   };
 
@@ -115,14 +128,14 @@ export default function Home() {
           <div className="flex gap-3 items-center">
             <input
               type="text"
-              value={message}
-              onChange={e => setMessage(e.target.value)}
-              onKeyPress={e => e.key === "Enter" && handleSend()}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyPress={e => e.key === "Enter" && handleSubmit(e)}
               placeholder="Type your message..."
               className="flex-1 rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent placeholder-gray-400"
             />
             <button
-              onClick={handleSend}
+              onClick={handleSubmit}
               disabled={isLoading}
               className="bg-cyan-600 text-white px-5 py-3 rounded-xl hover:bg-cyan-700 transition-all disabled:bg-cyan-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >

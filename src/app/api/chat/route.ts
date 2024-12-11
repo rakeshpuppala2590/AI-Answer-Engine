@@ -1,69 +1,48 @@
-// TODO: Implement the chat API with Groq and web scraping with Cheerio and Puppeteer
-// Refer to the Next.js Docs on how to read the Request body: https://nextjs.org/docs/app/building-your-application/routing/route-handlers
-// Refer to the Groq SDK here on how to use an LLM: https://www.npmjs.com/package/groq-sdk
-// Refer to the Cheerio docs here on how to parse HTML: https://cheerio.js.org/docs/basics/loading
-// Refer to Puppeteer docs here: https://pptr.dev/guides/what-is-puppeteer
+import { WebScraperService } from "../../../services/webScraper";
+import { ChatService } from "../../../services/chatService";
+import { RedisService } from "../../../services/redisService";
+import { ChatMessage } from "../../../types";
 
-import { Groq } from "groq-sdk";
-import * as cheerio from "cheerio";
-import puppeteer from "puppeteer";
+const webScraper = new WebScraperService();
+const chatService = new ChatService();
+const redisService = new RedisService();
 
 export async function POST(req: Request) {
   try {
-    const { message } = await req.json();
+    const { message, sessionId } = await req.json();
+    let urls: string[] = [];
 
-    // Extract URL from message if present
+    // Get URLs from message or search
     const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const urls = message.match(urlRegex);
-    let contextData = "";
+    const explicitUrls = message.match(urlRegex);
 
-    // Scrape content if URLs are found
-    if (urls && urls.length > 0) {
-      const browser = await puppeteer.launch({
-        headless: true,
-      });
-
-      for (const url of urls) {
-        try {
-          const page = await browser.newPage();
-          await page.goto(url);
-          const content = await page.content();
-          const $ = cheerio.load(content);
-          // Concatenate scraped text from each URL
-          contextData += $("body").text() + "\n";
-        } catch (error) {
-          console.error(`Failed to scrape ${url}:`, error);
-        }
-      }
-      await browser.close();
+    if (explicitUrls) {
+      urls = explicitUrls;
+    } else if (webScraper.needsWebSearch(message)) {
+      urls = await webScraper.getUrlsFromSearch(message);
     }
+    // Get context from URLs
+    const contextData = await webScraper.scrapeUrls(urls);
 
-    const groq = new Groq({
-      apiKey: process.env.GROQ_API_KEY,
-    });
+    // Get chat history
+    const messages = await redisService.getChatHistory(sessionId);
 
-    const completion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a helpful assistant that answers questions based on the provided context.",
-        },
-        {
-          role: "user",
-          content: contextData
-            ? `Context from URLs:\n${contextData}\n\nQuestion: ${message}`
-            : message,
-        },
-      ],
-      model: "mixtral-8x7b-32768",
-      temperature: 0.7,
-      max_tokens: 2048,
-    });
+    // Generate response
+    const aiResponse = await chatService.generateResponse(
+      message,
+      contextData,
+      messages
+    );
+
+    // Store new messages
+    await redisService.storeMessages(sessionId, [
+      { role: "user", content: message },
+      { role: "assistant", content: aiResponse },
+    ]);
 
     return Response.json({
-      answer: completion.choices[0]?.message?.content || "No answer generated",
-      urls: urls || [],
+      answer: aiResponse,
+      urls: urls,
     });
   } catch (error) {
     console.error("Error:", error);
