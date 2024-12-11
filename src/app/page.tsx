@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+// import { Message } from "./types";
 
 type Message = {
   role: "user" | "ai";
@@ -33,17 +34,23 @@ export default function Home() {
       });
 
       // TODO: Handle the response from the chat API to display the AI response in the UI
-
-
-
-
+      const data = await response.json();
+      // Add AI response
+      const aiMessage: Message = {
+        role: "ai",
+        content: data.answer,
+      };
+      setMessages(prev => [...prev, aiMessage]);
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Failed to get response:", error);
+      setMessages(prev => [
+        ...prev,
+        { role: "ai", content: "Sorry, I encountered an error." },
+      ]);
     } finally {
       setIsLoading(false);
     }
   };
-
 
   // TODO: Modify the color schemes, fonts, and UI as needed for a good user experience
   // Refer to the Tailwind CSS docs here: https://tailwindcss.com/docs/customizing-colors, and here: https://tailwindcss.com/docs/hover-focus-and-other-states
