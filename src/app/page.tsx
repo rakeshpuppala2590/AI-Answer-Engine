@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from "uuid";
 type Message = {
   role: "user" | "ai";
   content: string;
+  urls?: string[];
 };
 
 export default function Home() {
@@ -17,16 +18,44 @@ export default function Home() {
   const [sessionId, setSessionId] = useState("");
 
   useEffect(() => {
+    // Check for shared chat ID in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedId = urlParams.get("share");
+
     // Generate or retrieve session ID
-    const existingSessionId = localStorage.getItem("chatSessionId");
-    if (existingSessionId) {
-      setSessionId(existingSessionId);
-    } else {
-      const newSessionId = uuidv4();
-      localStorage.setItem("chatSessionId", newSessionId);
-      setSessionId(newSessionId);
+    const existingSessionId = localStorage.getItem("chatSessionId") || uuidv4();
+    setSessionId(existingSessionId);
+    localStorage.setItem("chatSessionId", existingSessionId);
+
+    // Load shared chat if available
+    if (sharedId) {
+      loadSharedChat(sharedId, existingSessionId);
     }
   }, []);
+
+  const loadSharedChat = async (shareId: string, newSessionId: string) => {
+    try {
+      const response = await fetch("/api/chat/shared", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shareId }),
+      });
+      const data = await response.json();
+
+      if (data.messages) {
+        setMessages(data.messages);
+        // Continue conversation
+        await fetch("/api/chat/continue", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shareId, newSessionId }),
+        });
+      }
+    } catch (error) {
+      console.error("Failed to load shared chat:", error);
+    }
+  };
+
   // Add to page.tsx
   const handleShare = async () => {
     try {
@@ -38,7 +67,7 @@ export default function Home() {
       const { shareId } = await response.json();
 
       // Create shareable URL
-      const shareUrl = `${window.location.origin}/chat/${shareId}`;
+      const shareUrl = `${window.location.origin}?share=${shareId}`;
       await navigator.clipboard.writeText(shareUrl);
       alert("Share link copied to clipboard!");
     } catch (error) {
@@ -86,53 +115,69 @@ export default function Home() {
   // TODO: Modify the color schemes, fonts, and UI as needed for a good user experience
   // Refer to the Tailwind CSS docs here: https://tailwindcss.com/docs/customizing-colors, and here: https://tailwindcss.com/docs/hover-focus-and-other-states
   return (
-    <div className="flex flex-col h-screen bg-gray-900">
+    <div className="flex h-screen flex-col bg-gray-900 text-gray-100">
       {/* Header */}
-      <div className="w-full bg-gray-800 border-b border-gray-700 p-4">
-        <div className="max-w-3xl mx-auto">
-          <h1 className="text-xl font-semibold text-white">Chat</h1>
+      <header className="fixed top-0 w-full bg-gray-800 border-b border-gray-700 p-4 z-10">
+        <div className="max-w-3xl mx-auto flex justify-between items-center">
+          <h1 className="text-xl font-semibold text-cyan-500">AI Chat</h1>
+          {messages.length > 0 && (
+            <button
+              onClick={handleShare}
+              className="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-all"
+            >
+              Share Chat
+            </button>
+          )}
         </div>
-      </div>
+      </header>
 
-      {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto pb-32 pt-4">
-        <div className="max-w-3xl mx-auto px-4">
-          {messages.map((msg, index) => (
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto pt-20 pb-32">
+        <div className="max-w-3xl mx-auto p-4 space-y-6">
+          {messages.map((message, index) => (
             <div
               key={index}
-              className={`flex gap-4 mb-4 ${
-                msg.role === "ai"
-                  ? "justify-start"
-                  : "justify-end flex-row-reverse"
+              className={`flex ${
+                message.role === "user" ? "justify-end" : "justify-start"
               }`}
             >
               <div
-                className={`px-4 py-2 rounded-2xl max-w-[80%] ${
-                  msg.role === "ai"
-                    ? "bg-gray-800 border border-gray-700 text-gray-100"
-                    : "bg-cyan-600 text-white ml-auto"
+                className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                  message.role === "user"
+                    ? "bg-cyan-600 text-white"
+                    : "bg-gray-800 border border-gray-700"
                 }`}
               >
-                {msg.content}
+                <p className="whitespace-pre-wrap">{message.content}</p>
+                {message.urls && message.urls.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-600">
+                    <p className="text-sm text-gray-400">Sources:</p>
+                    <ul className="list-disc pl-4 space-y-1">
+                      {message.urls.map((url, idx) => (
+                        <li key={idx}>
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm text-cyan-400 hover:text-cyan-300 break-all"
+                          >
+                            {url}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           ))}
           {isLoading && (
-            <div className="flex gap-4 mb-4">
-              <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center">
-                <svg
-                  className="w-5 h-5 text-gray-400"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                >
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-4-8c.79 0 1.5-.71 1.5-1.5S8.79 9 8 9s-1.5.71-1.5 1.5S7.21 11 8 11zm8 0c.79 0 1.5-.71 1.5-1.5S16.79 9 16 9s-1.5.71-1.5 1.5.71 1.5 1.5 1.5zm-4 4c2.21 0 4-1.79 4-4h-8c0 2.21 1.79 4 4 4z" />
-                </svg>
-              </div>
-              <div className="px-4 py-2 rounded-2xl bg-gray-800 border border-gray-700 text-gray-100">
-                <div className="flex items-center gap-1">
-                  <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                  <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                  <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
+            <div className="flex justify-start">
+              <div className="bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
+                <div className="flex space-x-2">
+                  <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
+                  <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-100" />
+                  <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-200" />
                 </div>
               </div>
             </div>
@@ -143,29 +188,23 @@ export default function Home() {
       {/* Input Area */}
       <div className="fixed bottom-0 w-full bg-gray-800 border-t border-gray-700 p-4">
         <div className="max-w-3xl mx-auto">
-          <div className="flex gap-3 items-center">
+          <form onSubmit={handleSubmit} className="flex gap-3 items-center">
             <input
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyPress={e => e.key === "Enter" && handleSubmit(e)}
               placeholder="Type your message..."
               className="flex-1 rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent placeholder-gray-400"
+              disabled={isLoading}
             />
             <button
-              onClick={handleSubmit}
-              disabled={isLoading}
+              type="submit"
+              disabled={isLoading || !input.trim()}
               className="bg-cyan-600 text-white px-5 py-3 rounded-xl hover:bg-cyan-700 transition-all disabled:bg-cyan-800 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? "Sending..." : "Send"}
             </button>
-            <button
-              onClick={handleShare}
-              className="px-4 py-2 bg-green-500 text-white rounded-lg"
-            >
-              Share Chat
-            </button>
-          </div>
+          </form>
         </div>
       </div>
     </div>
