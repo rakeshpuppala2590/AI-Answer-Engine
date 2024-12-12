@@ -1,35 +1,80 @@
 import { Redis } from "@upstash/redis";
+import { Ratelimit } from "@upstash/ratelimit";
 import { ChatMessage } from "../types";
 
 export class RedisService {
   private redis: Redis;
+  private ratelimit: Ratelimit;
 
   constructor() {
     this.redis = new Redis({
       url: process.env.UPSTASH_REDIS_REST_URL!,
       token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+      automaticDeserialization: true,
+    });
+    this.ratelimit = new Ratelimit({
+      redis: this.redis,
+      limiter: Ratelimit.slidingWindow(5, "1 m"), // 50 requests per minute
+      prefix: "app:ratelimit",
     });
   }
 
   async createShareableLink(sessionId: string): Promise<string> {
-    const shareId = crypto.randomUUID();
-    const messages = await this.getChatHistory(sessionId);
+    try {
+      const ip = crypto.randomUUID(); // Fallback ID if no real IP
+      const { success } = await this.ratelimit.limit(ip);
 
-    // Store original sessionId with shared messages
-    const shareData = {
-      messages,
-      originalSessionId: sessionId,
-      createdAt: new Date().toISOString(),
-    };
+      if (!success) {
+        throw new Error("Rate limit exceeded");
+      }
 
-    // Store with 24h expiry
-    await this.redis.setex(
-      `share:${shareId}`,
-      86400,
-      JSON.stringify(shareData)
-    );
+      const shareId = crypto.randomUUID();
+      const messages = await this.getChatHistory(sessionId);
 
-    return shareId;
+      const shareData = {
+        messages,
+        originalSessionId: sessionId,
+        createdAt: new Date().toISOString(),
+      };
+
+      await this.redis.setex(
+        `share:${shareId}`,
+        86400, // 24 hours
+        JSON.stringify(shareData)
+      );
+
+      return shareId;
+    } catch (error) {
+      console.error("Share creation error:", error);
+      throw error;
+    }
+  }
+
+  async isHealthy(): Promise<boolean> {
+    try {
+      await this.redis.ping();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Add connection retry logic
+  private async withRetry<T>(
+    operation: () => Promise<T>,
+    retries = 3
+  ): Promise<T> {
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await operation();
+      } catch (error) {
+        if (i === retries - 1) throw error;
+        await new Promise(resolve =>
+          setTimeout(resolve, 1000 * Math.pow(2, i))
+        );
+      }
+    }
+    throw new Error("Operation failed after retries");
   }
 
   async getSharedChat(shareId: string): Promise<{
