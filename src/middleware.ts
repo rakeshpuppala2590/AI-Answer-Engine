@@ -13,7 +13,7 @@ const redis = new Redis({
 
 const ratelimit = new Ratelimit({
   redis,
-  limiter: Ratelimit.slidingWindow(2, "1 m"),
+  limiter: Ratelimit.slidingWindow(10, "1 m"),
   analytics: true,
 });
 
