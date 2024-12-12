@@ -3,35 +3,47 @@
 import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 
-type Message = {
-  role: "user" | "ai";
+interface Message {
+  role: "user" | "assistant" | "system"; // Fix role types
   content: string;
   urls?: string[];
-};
+}
 
 export default function Home() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
-    { role: "ai", content: "Hello! How can I help you today?" },
+    { role: "assistant", content: "Hello! How can I help you today?" },
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState("");
 
   useEffect(() => {
-    // Check for shared chat ID in URL
+    // Initialize sessionId
+    const storedSessionId = localStorage.getItem("chatSessionId");
+    const newSessionId = storedSessionId || uuidv4();
+    setSessionId(newSessionId);
+    if (!storedSessionId) {
+      localStorage.setItem("chatSessionId", newSessionId);
+    }
+
+    // Load chat history from localStorage
+    const storedMessages = localStorage.getItem("chatHistory");
+    if (storedMessages) {
+      setMessages(JSON.parse(storedMessages));
+    }
+
+    // Check for shared chat
     const urlParams = new URLSearchParams(window.location.search);
     const sharedId = urlParams.get("share");
-
-    // Generate or retrieve session ID
-    const existingSessionId = localStorage.getItem("chatSessionId") || uuidv4();
-    setSessionId(existingSessionId);
-    localStorage.setItem("chatSessionId", existingSessionId);
-
-    // Load shared chat if available
     if (sharedId) {
-      loadSharedChat(sharedId, existingSessionId);
+      loadSharedChat(sharedId, newSessionId);
     }
   }, []);
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem("chatHistory", JSON.stringify(messages));
+  }, [messages]);
 
   const loadSharedChat = async (shareId: string, newSessionId: string) => {
     try {
@@ -45,11 +57,16 @@ export default function Home() {
       if (data.messages) {
         setMessages(data.messages);
         // Continue conversation
-        await fetch("/api/chat/continue", {
+        const continueResponse = await fetch("/api/chat/continue", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ shareId, newSessionId }),
         });
+
+        if (continueResponse.ok) {
+          const newUrl = window.location.pathname;
+          window.history.pushState({}, "", newUrl);
+        }
       }
     } catch (error) {
       console.error("Failed to load shared chat:", error);
@@ -96,15 +113,16 @@ export default function Home() {
       const data = await response.json();
 
       const aiMessage: Message = {
-        role: "ai",
+        role: "assistant",
         content: data.answer,
+        urls: data.urls,
       };
       setMessages(prev => [...prev, aiMessage]);
     } catch (error) {
       console.error("Failed to get response:", error);
       setMessages(prev => [
         ...prev,
-        { role: "ai", content: "Sorry, I encountered an error." },
+        { role: "assistant", content: "Sorry, I encountered an error." },
       ]);
     } finally {
       setIsLoading(false);
