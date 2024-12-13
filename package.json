@@ -21,6 +21,7 @@
     "puppeteer": "^23.10.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "serpapi": "^2.1.0",
     "uuid": "^11.0.3"
   },
   "devDependencies": {

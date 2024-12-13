@@ -1,20 +1,7 @@
 import puppeteer from "puppeteer";
 import * as cheerio from "cheerio";
-import { GoogleSearch } from "google-search-results-nodejs";
-interface SearchParams {
-  q: string;
-  num?: number;
-}
-
-interface SearchResult {
-  link: string;
-  title: string;
-  snippet: string;
-}
-
-interface SearchResponse {
-  organic_results: SearchResult[];
-}
+import { SearchResponse } from "../types/search";
+import { getJson } from "serpapi";
 
 export class WebScraperService {
   private searchTriggers = [
@@ -48,24 +35,34 @@ export class WebScraperService {
     if (!process.env.SERPAPI_KEY) {
       throw new Error("SERPAPI_KEY environment variable is not defined");
     }
-    const search = new GoogleSearch(process.env.SERPAPI_KEY);
-
-    const searchResults: SearchResponse = await new Promise(resolve => {
-      search.json(
+    const searchResults = await new Promise<SearchResponse>(resolve => {
+      getJson(
         {
           q: query,
           num: 3,
-        } as SearchParams,
+        },
         (data: SearchResponse) => resolve(data)
       );
     });
 
+    // Add null check and type guard
+    if (
+      !searchResults?.organic_results ||
+      !Array.isArray(searchResults.organic_results)
+    ) {
+      return [];
+    }
+
     return searchResults.organic_results
-      .map((result: SearchResult) => result.link)
-      .slice(0, 3);
+      .filter(result => result?.link)
+      .map(result => result.link);
   }
 
   async scrapeUrls(urls: string[]): Promise<string> {
+    if (!Array.isArray(urls)) {
+      return "";
+    }
+
     let contextData = "";
 
     if (urls.length > 0) {

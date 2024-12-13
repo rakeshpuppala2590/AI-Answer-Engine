@@ -1,3 +1,4 @@
+import { SearchResponse } from "./search";
 declare module "google-search-results-nodejs" {
   export class GoogleSearch {
     constructor(apiKey: string);
