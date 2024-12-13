@@ -21,17 +21,19 @@ const ratelimit = new Ratelimit({
 
 export async function middleware(request: NextRequest) {
   // Add CORS headers to all responses
-  const corsHeaders = {
+  const headers = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Security-Policy":
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.upstash.io",
   };
 
   // Handle preflight requests
   if (request.method === "OPTIONS") {
     return new NextResponse(null, {
       status: 200,
-      headers: corsHeaders,
+      headers,
     });
   }
 
@@ -50,7 +52,7 @@ export async function middleware(request: NextRequest) {
       return new NextResponse(JSON.stringify(errorResponse), {
         status: 429,
         headers: {
-          ...corsHeaders,
+          ...headers,
           "Content-Type": "application/json",
           "X-RateLimit-Limit": limit.toString(),
           "X-RateLimit-Reset": reset.toString(),
@@ -60,7 +62,7 @@ export async function middleware(request: NextRequest) {
 
     const response = NextResponse.next();
     // Add CORS headers to successful responses
-    Object.entries(corsHeaders).forEach(([key, value]) => {
+    Object.entries(headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });
     return response;
@@ -68,7 +70,7 @@ export async function middleware(request: NextRequest) {
     console.error("Rate limit error:", err);
     const response = NextResponse.next();
     // Add CORS headers to error responses
-    Object.entries(corsHeaders).forEach(([key, value]) => {
+    Object.entries(headers).forEach(([key, value]) => {
       response.headers.set(key, value);
     });
     return response;
