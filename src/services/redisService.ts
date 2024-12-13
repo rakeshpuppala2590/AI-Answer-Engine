@@ -10,7 +10,7 @@ export class RedisService {
     this.redis = new Redis({
       url: process.env.UPSTASH_REDIS_REST_URL!,
       token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-      automaticDeserialization: true,
+      automaticDeserialization: false,
     });
     this.ratelimit = new Ratelimit({
       redis: this.redis,
@@ -129,12 +129,48 @@ export class RedisService {
 
   async getChatHistory(sessionId: string): Promise<ChatMessage[]> {
     try {
-      const messages = await this.redis.lrange(`chat:${sessionId}`, 0, -1);
-      return messages.map(msg => JSON.parse(msg));
+      const messages = await this.withRetry(() =>
+        this.redis.lrange(`chat:${sessionId}`, 0, -1)
+      );
+
+      // Ensure messages is an array
+      if (!Array.isArray(messages)) {
+        console.error("Invalid messages format:", messages);
+        return [];
+      }
+
+      // Safely parse messages
+      return messages.reduce((acc: ChatMessage[], msg: string) => {
+        try {
+          const parsed = JSON.parse(msg);
+          if (this.isValidChatMessage(parsed)) {
+            acc.push(parsed);
+          }
+        } catch (error) {
+          console.error("Failed to parse message:", error);
+        }
+        return acc;
+      }, []);
     } catch (error) {
       console.error("Failed to get chat history:", error);
       return [];
     }
+  }
+
+  private isValidChatMessage(message: unknown): message is ChatMessage {
+    if (!message || typeof message !== "object") {
+      return false;
+    }
+
+    // Use type assertion with Record to allow any string key
+    const candidate = message as Record<string, unknown>;
+
+    return (
+      typeof candidate.role === "string" &&
+      ["user", "assistant", "system"].includes(candidate.role) &&
+      typeof candidate.content === "string" &&
+      (!candidate.urls || Array.isArray(candidate.urls))
+    );
   }
 
   async storeMessages(
@@ -142,11 +178,23 @@ export class RedisService {
     messages: ChatMessage[]
   ): Promise<void> {
     try {
-      for (const message of messages) {
-        await this.redis.rpush(`chat:${sessionId}`, JSON.stringify(message));
+      if (!Array.isArray(messages)) {
+        throw new Error("Invalid messages format");
       }
+
+      await this.withRetry(async () => {
+        for (const message of messages) {
+          if (this.isValidChatMessage(message)) {
+            await this.redis.rpush(
+              `chat:${sessionId}`,
+              JSON.stringify(message)
+            );
+          }
+        }
+      });
     } catch (error) {
       console.error("Failed to store messages:", error);
+      throw error;
     }
   }
 
