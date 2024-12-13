@@ -15,61 +15,106 @@ export default function Home() {
     { role: "assistant", content: "Hello! How can I help you today?" },
   ]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingShared, setIsLoadingShared] = useState(false);
   const [sessionId, setSessionId] = useState("");
 
   useEffect(() => {
-    // Initialize sessionId
-    const storedSessionId = localStorage.getItem("chatSessionId");
-    const newSessionId = storedSessionId || uuidv4();
-    setSessionId(newSessionId);
-    if (!storedSessionId) {
-      localStorage.setItem("chatSessionId", newSessionId);
-    }
+    const initializeChat = async () => {
+      // Initialize sessionId
+      const storedSessionId = localStorage.getItem("chatSessionId");
+      const newSessionId = storedSessionId || uuidv4();
+      setSessionId(newSessionId);
 
-    // Load chat history from localStorage
-    const storedMessages = localStorage.getItem("chatHistory");
-    if (storedMessages) {
-      setMessages(JSON.parse(storedMessages));
-    }
+      if (!storedSessionId) {
+        localStorage.setItem("chatSessionId", newSessionId);
+      }
 
-    // Check for shared chat
-    const urlParams = new URLSearchParams(window.location.search);
-    const sharedId = urlParams.get("share");
-    if (sharedId) {
-      loadSharedChat(sharedId, newSessionId);
-    }
+      // Check for shared chat first
+      const urlParams = new URLSearchParams(window.location.search);
+      const sharedId = urlParams.get("share");
+      if (sharedId) {
+        setIsLoadingShared(true);
+        try {
+          await loadSharedChat(sharedId, newSessionId);
+        } catch (error) {
+          console.error("Failed to load shared chat:", error);
+          // Fall back to stored messages
+          loadStoredMessages();
+        } finally {
+          setIsLoadingShared(false);
+        }
+      } else {
+        loadStoredMessages();
+      }
+    };
+
+    const loadStoredMessages = () => {
+      try {
+        const storedMessages = localStorage.getItem("chatHistory");
+        if (storedMessages) {
+          const parsedMessages = JSON.parse(storedMessages);
+          if (Array.isArray(parsedMessages)) {
+            setMessages(parsedMessages);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load stored messages:", error);
+      }
+    };
+
+    initializeChat();
   }, []);
 
-  // Save messages to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem("chatHistory", JSON.stringify(messages));
-  }, [messages]);
-
+  // src/app/page.tsx
   const loadSharedChat = async (shareId: string, newSessionId: string) => {
     try {
+      // First load shared chat data
       const response = await fetch("/api/chat/shared", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shareId }),
       });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (data.messages) {
-        setMessages(data.messages);
-        // Continue conversation
-        const continueResponse = await fetch("/api/chat/continue", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ shareId, newSessionId }),
-        });
-
-        if (continueResponse.ok) {
-          const newUrl = window.location.pathname;
-          window.history.pushState({}, "", newUrl);
-        }
+      if (!data || !data.messages) {
+        throw new Error("No messages found in shared chat");
       }
+
+      // Set messages in state
+      setMessages(data.messages);
+
+      // Continue conversation with new session
+      const continueResponse = await fetch("/api/chat/continue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shareId,
+          newSessionId,
+          messages: data.messages, // Pass messages explicitly
+        }),
+      });
+
+      if (!continueResponse.ok) {
+        throw new Error(`Failed to continue chat: ${continueResponse.status}`);
+      }
+
+      // Remove share parameter from URL
+      window.history.pushState({}, "", window.location.pathname);
+
+      // Store messages in localStorage
+      localStorage.setItem("chatHistory", JSON.stringify(data.messages));
+
+      return data.messages;
     } catch (error) {
       console.error("Failed to load shared chat:", error);
+      // Clear invalid share ID from URL
+      window.history.pushState({}, "", window.location.pathname);
+      throw error;
     }
   };
 
@@ -152,52 +197,47 @@ export default function Home() {
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto pt-20 pb-32">
         <div className="max-w-3xl mx-auto p-4 space-y-6">
-          {messages.map((message, index) => (
-            <div
-              key={index}
-              className={`flex ${
-                message.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
+          {Array.isArray(messages) && messages.length > 0 ? (
+            messages.map((message, index) => (
               <div
-                className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                  message.role === "user"
-                    ? "bg-cyan-600 text-white"
-                    : "bg-gray-800 border border-gray-700"
+                key={`${message.role}-${index}`}
+                className={`flex ${
+                  message.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
-                <p className="whitespace-pre-wrap">{message.content}</p>
-                {message.urls && message.urls.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-gray-600">
-                    <p className="text-sm text-gray-400">Sources:</p>
-                    <ul className="list-disc pl-4 space-y-1">
-                      {message.urls.map((url, idx) => (
-                        <li key={idx}>
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-cyan-400 hover:text-cyan-300 break-all"
-                          >
-                            {url}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {isLoading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-800 border border-gray-700 rounded-2xl px-4 py-3">
-                <div className="flex space-x-2">
-                  <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" />
-                  <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-100" />
-                  <div className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce delay-200" />
+                <div
+                  className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                    message.role === "user"
+                      ? "bg-cyan-600 text-white"
+                      : "bg-gray-800 border border-gray-700"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  {message.urls && message.urls.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gray-600">
+                      <p className="text-sm text-gray-400">Sources:</p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        {message.urls.map((url, idx) => (
+                          <li key={idx}>
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm text-cyan-400 hover:text-cyan-300 break-all"
+                            >
+                              {url}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               </div>
+            ))
+          ) : (
+            <div className="text-center text-gray-500">
+              {isLoadingShared ? "Loading shared chat..." : "No messages yet"}
             </div>
           )}
         </div>

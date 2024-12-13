@@ -21,16 +21,13 @@ export class RedisService {
 
   async createShareableLink(sessionId: string): Promise<string> {
     try {
-      const ip = crypto.randomUUID(); // Fallback ID if no real IP
-      const { success } = await this.ratelimit.limit(ip);
+      const messages = await this.getChatHistory(sessionId);
 
-      if (!success) {
-        throw new Error("Rate limit exceeded");
+      if (!messages || !Array.isArray(messages)) {
+        throw new Error("Invalid chat history");
       }
 
       const shareId = crypto.randomUUID();
-      const messages = await this.getChatHistory(sessionId);
-
       const shareData = {
         messages,
         originalSessionId: sessionId,
@@ -39,7 +36,7 @@ export class RedisService {
 
       await this.redis.setex(
         `share:${shareId}`,
-        86400, // 24 hours
+        86400,
         JSON.stringify(shareData)
       );
 
@@ -82,13 +79,16 @@ export class RedisService {
     originalSessionId: string;
   }> {
     try {
-      const shared = await this.redis.get<string>(`share:${shareId}`);
-      if (!shared) return { messages: [], originalSessionId: "" };
+      const data = await this.redis.get(`share:${shareId}`);
 
-      const data = JSON.parse(shared);
+      if (!data) {
+        return { messages: [], originalSessionId: "" };
+      }
+
+      const parsed = JSON.parse(data as string);
       return {
-        messages: data.messages,
-        originalSessionId: data.originalSessionId,
+        messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+        originalSessionId: parsed.originalSessionId || "",
       };
     } catch (error) {
       console.error("Failed to get shared chat:", error);
@@ -129,28 +129,31 @@ export class RedisService {
 
   async getChatHistory(sessionId: string): Promise<ChatMessage[]> {
     try {
-      const messages = await this.withRetry(() =>
+      const rawMessages = await this.withRetry(() =>
         this.redis.lrange(`chat:${sessionId}`, 0, -1)
       );
 
-      // Ensure messages is an array
-      if (!Array.isArray(messages)) {
-        console.error("Invalid messages format:", messages);
+      // Ensure we have an array
+      if (!Array.isArray(rawMessages)) {
+        console.error("Invalid response format:", rawMessages);
         return [];
       }
 
-      // Safely parse messages
-      return messages.reduce((acc: ChatMessage[], msg: string) => {
+      // Safely parse and validate each message
+      const validMessages: ChatMessage[] = [];
+
+      for (const msg of rawMessages) {
         try {
           const parsed = JSON.parse(msg);
           if (this.isValidChatMessage(parsed)) {
-            acc.push(parsed);
+            validMessages.push(parsed);
           }
         } catch (error) {
-          console.error("Failed to parse message:", error);
+          console.error("Failed to parse message:", msg, error);
         }
-        return acc;
-      }, []);
+      }
+
+      return validMessages;
     } catch (error) {
       console.error("Failed to get chat history:", error);
       return [];
@@ -162,14 +165,15 @@ export class RedisService {
       return false;
     }
 
-    // Use type assertion with Record to allow any string key
     const candidate = message as Record<string, unknown>;
 
     return (
       typeof candidate.role === "string" &&
       ["user", "assistant", "system"].includes(candidate.role) &&
       typeof candidate.content === "string" &&
-      (!candidate.urls || Array.isArray(candidate.urls))
+      (!candidate.urls ||
+        (Array.isArray(candidate.urls) &&
+          candidate.urls.every(url => typeof url === "string")))
     );
   }
 
@@ -178,23 +182,24 @@ export class RedisService {
     messages: ChatMessage[]
   ): Promise<void> {
     try {
+      // Validate input
       if (!Array.isArray(messages)) {
-        throw new Error("Invalid messages format");
+        console.error("Invalid messages format:", messages);
+        return;
       }
 
+      // Filter out invalid messages
+      const validMessages = messages.filter(msg =>
+        this.isValidChatMessage(msg)
+      );
+
       await this.withRetry(async () => {
-        for (const message of messages) {
-          if (this.isValidChatMessage(message)) {
-            await this.redis.rpush(
-              `chat:${sessionId}`,
-              JSON.stringify(message)
-            );
-          }
+        for (const message of validMessages) {
+          await this.redis.rpush(`chat:${sessionId}`, JSON.stringify(message));
         }
       });
     } catch (error) {
       console.error("Failed to store messages:", error);
-      throw error;
     }
   }
 
