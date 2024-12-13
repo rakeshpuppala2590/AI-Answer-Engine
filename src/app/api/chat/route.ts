@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     // Generate response
     const aiResponse = await chatService.generateResponse(
       message,
-      contextData,
+      contextData.join("\n"),
       messages
     );
 

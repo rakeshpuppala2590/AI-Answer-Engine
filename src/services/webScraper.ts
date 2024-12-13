@@ -1,7 +1,4 @@
 import * as puppeteer from "puppeteer";
-import * as cheerio from "cheerio";
-import { SearchResponse } from "../types/search";
-import { getJson } from "serpapi";
 
 export class WebScraperService {
   private searchTriggers = [
