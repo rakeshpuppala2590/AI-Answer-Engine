@@ -1,4 +1,5 @@
 import * as puppeteer from "puppeteer";
+import { ScrapeCache } from "./cache/ScrapeCache";
 
 export class WebScraperService {
   private searchTriggers = [
@@ -19,6 +20,12 @@ export class WebScraperService {
     "price",
     "cost",
   ];
+
+  private cache: ScrapeCache;
+
+  constructor() {
+    this.cache = new ScrapeCache(60); // 1 hour cache
+  }
 
   needsWebSearch(message: string): boolean {
     return (
@@ -101,72 +108,107 @@ export class WebScraperService {
     const browsers: puppeteer.Browser[] = [];
     const results: string[] = new Array(urls.length).fill("");
 
+    console.log("\n=== Starting Scrape Process ===");
+
     try {
-      // Initialize browser pool
-      for (let i = 0; i < MAX_WORKERS; i++) {
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-blink-features=AutomationControlled",
-          ],
-        });
-        browsers.push(browser);
-      }
+      // Check cache first
+      const uncachedUrls: string[] = [];
+      const urlIndices: number[] = [];
 
-      // Create scraping workers
-      const scrapeWorker = async (
-        url: string,
-        browserIndex: number
-      ): Promise<string> => {
-        const browser = browsers[browserIndex];
-        const page = await browser.newPage();
-
-        try {
-          await page.setRequestInterception(true);
-          page.on("request", (req: puppeteer.HTTPRequest) => {
-            if (["image", "stylesheet", "font"].includes(req.resourceType())) {
-              req.abort();
-            } else {
-              req.continue();
-            }
-          });
-
-          await page.goto(url, {
-            waitUntil: "domcontentloaded",
-            timeout: 15000,
-          });
-
-          const content = await page.evaluate(() => {
-            const article = document.querySelector("article") || document.body;
-            return article.innerText.slice(0, 1500);
-          });
-
-          return content;
-        } catch (error) {
-          console.error(`Failed to scrape ${url}:`, error);
-          return "";
-        } finally {
-          await page.close();
+      urls.forEach((url, index) => {
+        const cached = this.cache.get(url);
+        if (cached) {
+          console.log(`🟢 Cache HIT: ${url.substring(0, 50)}...`);
+          results[index] = cached;
+        } else {
+          console.log(`🔴 Cache MISS: ${url.substring(0, 50)}...`);
+          uncachedUrls.push(url);
+          urlIndices.push(index);
         }
-      };
+      });
 
-      // Process URLs in parallel batches
-      for (let i = 0; i < urls.length; i += MAX_WORKERS) {
-        const batch = urls.slice(i, Math.min(i + MAX_WORKERS, urls.length));
-        const batchPromises = batch.map((url, index) =>
-          scrapeWorker(url, index % MAX_WORKERS)
-        );
+      // Only scrape uncached URLs
+      if (uncachedUrls.length > 0) {
+        // Initialize browser pool
+        for (let i = 0; i < MAX_WORKERS; i++) {
+          const browser = await puppeteer.launch({
+            headless: true,
+            args: [
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-blink-features=AutomationControlled",
+            ],
+          });
+          browsers.push(browser);
+        }
 
-        const batchResults = await Promise.all(batchPromises);
-        results.splice(i, batchResults.length, ...batchResults);
+        // Create scraping workers
+        const scrapeWorker = async (
+          url: string,
+          browserIndex: number
+        ): Promise<string> => {
+          const browser = browsers[browserIndex];
+          const page = await browser.newPage();
+
+          try {
+            await page.setRequestInterception(true);
+            page.on("request", req => {
+              if (
+                ["image", "stylesheet", "font"].includes(req.resourceType())
+              ) {
+                req.abort();
+              } else {
+                req.continue();
+              }
+            });
+
+            await page.goto(url, {
+              waitUntil: "domcontentloaded",
+              timeout: 15000,
+            });
+
+            const content = await page.evaluate(() => {
+              const article =
+                document.querySelector("article") || document.body;
+              return article.innerText.slice(0, 1500);
+            });
+
+            // Cache the result
+            this.cache.set(url, content);
+            console.log(`📥 Cached: ${url.substring(0, 50)}...`);
+
+            return content;
+          } catch (error) {
+            console.error(`❌ Failed to scrape ${url}:`, error);
+            return "";
+          } finally {
+            await page.close();
+          }
+        };
+
+        // Process uncached URLs in parallel batches
+        for (let i = 0; i < uncachedUrls.length; i += MAX_WORKERS) {
+          const batch = uncachedUrls.slice(
+            i,
+            Math.min(i + MAX_WORKERS, uncachedUrls.length)
+          );
+          const batchPromises = batch.map((url, index) =>
+            scrapeWorker(url, index % MAX_WORKERS)
+          );
+
+          const batchResults = await Promise.all(batchPromises);
+          batchResults.forEach((content, batchIndex) => {
+            const originalIndex = urlIndices[i + batchIndex];
+            results[originalIndex] = content;
+          });
+        }
       }
     } catch (error) {
-      console.error("Scraping error:", error);
+      console.error("🚨 Scraping error:", error);
     } finally {
       // Cleanup browser instances
       await Promise.all(browsers.map(browser => browser.close()));
+      console.log("=== Scrape Process Complete ===\n");
     }
 
     return results;
