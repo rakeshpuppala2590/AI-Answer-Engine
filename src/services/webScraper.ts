@@ -1,5 +1,6 @@
 import * as puppeteer from "puppeteer";
 import { ScrapeCache } from "./cache/ScrapeCache";
+import { YoutubeTranscript } from "youtube-transcript";
 
 export class WebScraperService {
   private searchTriggers = [
@@ -25,6 +26,49 @@ export class WebScraperService {
 
   constructor() {
     this.cache = new ScrapeCache(60); // 1 hour cache
+  }
+  private isYouTubeUrl(url: string): boolean {
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
+    return youtubeRegex.test(url);
+  }
+
+  private async getYoutubeTranscript(url: string): Promise<string> {
+    try {
+      // Check cache first
+      const cached = this.cache.get(`yt:${url}`);
+      if (cached) {
+        console.log(`🟢 Cache HIT for YouTube transcript: ${url}`);
+        return cached;
+      }
+
+      // Extract video ID from URL
+      const videoId = this.extractVideoId(url);
+      if (!videoId) {
+        throw new Error("Invalid YouTube URL");
+      }
+
+      // Get transcript
+      const transcripts = await YoutubeTranscript.fetchTranscript(videoId);
+      console.log("YouTube transcript:", transcripts);
+      const fullText = transcripts.map(part => part.text).join(" ");
+
+      // Cache the result
+      this.cache.set(`yt:${url}`, fullText);
+      return fullText;
+    } catch (error) {
+      console.error(`Failed to get YouTube transcript: ${error}`);
+      if (error instanceof Error) {
+        return `Unable to get transcript: ${error.message}`;
+      } else {
+        return "Unable to get transcript due to an unknown error.";
+      }
+    }
+  }
+  private extractVideoId(url: string): string | null {
+    const regExp =
+      /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+    const match = url.match(regExp);
+    return match && match[2].length === 11 ? match[2] : null;
   }
 
   needsWebSearch(message: string): boolean {
@@ -111,8 +155,24 @@ export class WebScraperService {
     console.log("\n=== Starting Scrape Process ===");
 
     try {
-      // Check cache first
-      const uncachedUrls: string[] = [];
+      const processedUrls = await Promise.all(
+        urls.map(async (url, index) => {
+          if (this.isYouTubeUrl(url)) {
+            try {
+              const transcript = await this.getYoutubeTranscript(url);
+              results[index] = `YouTube Transcript: ${transcript}`;
+              return null; // Skip normal scraping
+            } catch (error) {
+              console.error(`Failed to get YouTube transcript: ${error}`);
+            }
+          }
+          return { url, index };
+        })
+      );
+
+      // Continue with normal scraping for non-YouTube URLs
+      const uncachedUrls = processedUrls.filter(item => item !== null);
+
       const urlIndices: number[] = [];
 
       urls.forEach((url, index) => {
@@ -122,7 +182,7 @@ export class WebScraperService {
           results[index] = cached;
         } else {
           console.log(`🔴 Cache MISS: ${url.substring(0, 50)}...`);
-          uncachedUrls.push(url);
+          uncachedUrls.push({ url, index });
           urlIndices.push(index);
         }
       });
@@ -192,7 +252,7 @@ export class WebScraperService {
             i,
             Math.min(i + MAX_WORKERS, uncachedUrls.length)
           );
-          const batchPromises = batch.map((url, index) =>
+          const batchPromises = batch.map(({ url }, index) =>
             scrapeWorker(url, index % MAX_WORKERS)
           );
 
