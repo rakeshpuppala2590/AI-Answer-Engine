@@ -16,6 +16,7 @@
     "cheerio": "^1.0.0",
     "google-search-results-nodejs": "^2.1.0",
     "groq-sdk": "^0.9.0",
+    "lucide-react": "^0.468.0",
     "next": "15.0.4",
     "prettier": "^3.4.2",
     "puppeteer": "^23.10.3",
